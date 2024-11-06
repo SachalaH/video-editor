@@ -72,6 +72,8 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>C:\Users\admin\source\repos\FinalSemProject\</OutDir>
+    <IncludePath>C:\vcpkg\vcpkg\packages\ffmpeg_x64-windows\include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\vcpkg\vcpkg\packages\ffmpeg_x64-windows\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -113,6 +115,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <AdditionalLibraryDirectories>C:\vcpkg\vcpkg\packages\ffmpeg_x64-windows\lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -157,7 +161,6 @@
     <ClCompile Include="..\..\..\Desktop\imgui\imgui_widgets.cpp" />
     <ClCompile Include="..\..\..\Desktop\tinyfiledialogs\tinyfiledialogs.c" />
     <ClCompile Include="FinalSemProject.cpp" />
-    <ClCompile Include="mergead.cpp" />
     <ClCompile Include="Ui.cpp" />
   </ItemGroup>
   <ItemGroup>
