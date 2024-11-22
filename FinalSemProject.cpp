@@ -1,3 +1,4 @@
+#include <windows.h>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -12,6 +13,7 @@
 #include <libavutil/imgutils.h>
 #include <thread>
 #include <atomic>
+#include "playback.h"
 // Include necessary FFmpeg libraries
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -47,6 +49,7 @@ AdVideoInfo adVideo;
 bool isMainVideoSet = false;
 bool isAdVideoSet = false;
 int insertAfterSeconds = 0;  // Time in seconds after which the ad should be inserted
+int durationOfAd = 0; // Time in seconds for the duration of the ad in the main video
 bool insertAdError = false;  // Error flag to indicate invalid input
 
 // Function prototypes for inserting an ad
@@ -56,8 +59,13 @@ bool validateInsertAd();
 void previewInsertAd();
 void saveInsertAd();
 
-
-
+void AttachConsoleOutput() {
+    AllocConsole();
+    FILE* stream;
+    freopen_s(&stream, "CONOUT$", "w", stdout); // Safe version
+    freopen_s(&stream, "CONOUT$", "w", stderr); // Safe version
+    std::cout << "Console attached!" << std::endl;
+}
 
 
 // Maximum number of videos to merge
@@ -84,7 +92,7 @@ static int selectedFilterIndex = 0;  // Default to no filter
 // Speed and filter options
 const float speedOptions[] = { 0.5f, 0.75f, 1.0f, 1.25f, 1.5f };
 const char* speedLabels[] = { "0.5x", "0.75x", "1x", "1.25x", "1.5x"};
-const char* filterLabels[] = { "No filter","Filter 1", "Filter 2", "Filter 3" };
+const char* filterLabels[] = { "No filter","Sepia", "Grayscale", "Edge Detection", "Blur"};
 
 // Function prototypes for the button actions
 void importVideo();
@@ -95,6 +103,14 @@ bool getVideoDuration(const std::string& path, char* endTimeStr, size_t endTimeS
 // Atomic flag for play/pause functionality
 std::atomic<bool> is_playing(true);
 
+// function prototype for opening a video object using opencv
+cv::VideoCapture openVideo(const std::string& filePath);
+void processVideo(cv::VideoCapture& video, int startSeconds, int endSeconds, float speedMultiplier, const std::string& filter, const std::string& outputFile);
+
+
+
+int getSecondsFromTimeString(const char* timeStr);
+
 
 // Callback to handle window resizing
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -104,7 +120,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 int main() {
     // Initialize FFmpeg for metadata reading
     //av_register_all();
-
+    AttachConsoleOutput(); // Attach console at startup
     // Initialize GLFW
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW\n";
@@ -171,6 +187,7 @@ int main() {
                 isMainVideoSet = false;
                 isAdVideoSet = false;
                 insertAfterSeconds = 0;
+                durationOfAd = 0;
                 insertAdError = false;
                 
             }
@@ -190,8 +207,40 @@ int main() {
             ImGui::Separator();
 
             // Start and end time input boxes
+            //ImGui::InputText("Start Time (mm:ss)", startTime, IM_ARRAYSIZE(startTime));
+            //ImGui::InputText("End Time (mm:ss)", endTime, IM_ARRAYSIZE(endTime), ImGuiInputTextFlags_ReadOnly);
+             // Start and end time input boxes
+             // Parse video duration in seconds for validation
+            static int videoDurationSeconds = getSecondsFromTimeString(endTime);
+
+            // Parse user input times
+            int startSeconds = getSecondsFromTimeString(startTime);
+            int endSeconds = getSecondsFromTimeString(endTime);
+
+            // Clamp start and end times to valid ranges
+            if (startSeconds < 0) startSeconds = 0;
+            if (startSeconds >= videoDurationSeconds) startSeconds = videoDurationSeconds - 1;
+
+            if (endSeconds <= startSeconds) endSeconds = startSeconds + 1;
+            if (endSeconds > videoDurationSeconds) endSeconds = videoDurationSeconds;
+
+            // Reflect corrected values in the UI
+            snprintf(startTime, IM_ARRAYSIZE(startTime), "%02d:%02d", startSeconds / 60, startSeconds % 60);
+            snprintf(endTime, IM_ARRAYSIZE(endTime), "%02d:%02d", endSeconds / 60, endSeconds % 60);
+
+            // Start and end time input boxes
             ImGui::InputText("Start Time (mm:ss)", startTime, IM_ARRAYSIZE(startTime));
-            ImGui::InputText("End Time (mm:ss)", endTime, IM_ARRAYSIZE(endTime), ImGuiInputTextFlags_ReadOnly);
+            ImGui::InputText("End Time (mm:ss)", endTime, IM_ARRAYSIZE(endTime));
+
+            // Display validation message
+            if (startSeconds < 0 || startSeconds >= videoDurationSeconds || endSeconds > videoDurationSeconds || endSeconds <= startSeconds) {
+                ImGui::TextColored(ImVec4(1, 0, 0, 1), "Error: Invalid time range. Adjust start and end times.");
+            }
+            else {
+                //ImGui::TextColored(ImVec4(0, 1, 0, 1), "Valid time range.");
+            }
+
+            ImGui::Separator();
 
             // Mute audio checkbox
             ImGui::Checkbox("Mute Audio", &muteAudio);
@@ -211,8 +260,34 @@ int main() {
             // Preview and Save buttons
             if (ImGui::Button("Preview")) {
                 std::cout << "Previewing video: " << videoPath << "\n";
+                
                 // Add logic to preview the video here
-                //startPreview(videoPath);
+                //startPreview(videoPath
+
+                std::cout << "Previewing video with the following settings:\n";
+                std::cout << "Start Time: " << startTime << " (" << startSeconds << " seconds)\n";
+                std::cout << "End Time: " << endTime << " (" << endSeconds << " seconds)\n";
+
+                // Print mute audio state
+                std::cout << "Mute Audio: " << (muteAudio ? "Yes" : "No") << "\n";
+
+                // Print selected speed
+                std::cout << "Playback Speed: " << speedLabels[selectedSpeedIndex] << "\n";
+
+                // Print selected filter
+                std::cout << "Filter: " << filterLabels[selectedFilterIndex] << "\n";
+
+                // open the video object 
+                cv::VideoCapture video = openVideo(videoPath);
+                // trim and apply the speed
+                std::string outputFile = "output_processed.mp4";
+                processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], outputFile);
+                // apply the relevant filters
+                // check if audio is to be muted or no
+
+                //Playback playback(videoPath);
+                //playback.play();
+                //break;
             }
             ImGui::SameLine();
             if (ImGui::Button("Save")) {
@@ -223,6 +298,27 @@ int main() {
                 std::cout << "Speed: " << speedOptions[selectedSpeedIndex] << "x\n";
                 std::cout << "Filter: " << filterLabels[selectedFilterIndex] << "\n";
                 // Add logic to save the video here
+                // Open a Save File dialog for the user to specify the output file path
+                const char* filters[] = { "*.mp4", "*.avi", "*.mov" }; // Supported formats
+                const char* outputPath = tinyfd_saveFileDialog("Save Processed Video", "output_video.mp4", 3, filters, "Video Files");
+
+                if (outputPath) {
+                    std::cout << "Saving video to: " << outputPath << "\n";
+
+                    // Reprocess the video with the user's selected file path
+                    try {
+                        // open the video object 
+                        cv::VideoCapture video = openVideo(videoPath);
+                        processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], outputPath);
+                        std::cout << "Video successfully saved to: " << outputPath << "\n";
+                    }
+                    catch (const std::exception& ex) {
+                        std::cerr << "Error: Failed to save video. Exception: " << ex.what() << "\n";
+                    }
+                }
+                else {
+                    std::cerr << "Save operation canceled or failed.\n";
+                }
             }
 
             if (ImGui::Button("Back")) {
@@ -256,6 +352,18 @@ int main() {
 
     return 0;
 }
+
+
+// Function to open a video file and return a cv::VideoCapture object
+cv::VideoCapture openVideo(const std::string& filePath) {
+    cv::VideoCapture video(filePath); // Open the video file
+    if (!video.isOpened()) {         // Check if the file was successfully opened
+        throw std::runtime_error("Error: Could not open video file."); // Throw an exception on failure
+    }
+    return video; // Return the opened video object
+}
+
+
 
 // Function to handle video import using TinyDialogs
 void importVideo() {
@@ -304,6 +412,86 @@ bool getVideoDuration(const std::string& path, char* endTimeStr, size_t endTimeS
     avformat_close_input(&fmtCtx);
     return true;
 }
+
+
+int getSecondsFromTimeString(const char* timeStr) {
+    int minutes = 0, seconds = 0;
+    if (sscanf_s(timeStr, "%d:%d", &minutes, &seconds) != 2) {
+        return -1; // Invalid time format
+    }
+    if (minutes < 0 || seconds < 0 || seconds >= 60) {
+        return -1; // Invalid range
+    }
+    return minutes * 60 + seconds;
+}
+
+
+// function to trim the video and apply the speed
+#include <opencv2/opencv.hpp>
+#include <stdexcept>
+#include <string>
+
+// Function to trim and change the speed of a video
+// Function to process video: trim, change speed, and apply filter
+void processVideo(cv::VideoCapture& video, int startSeconds, int endSeconds, float speedMultiplier, const std::string& filter, const std::string& outputFile) {
+    if (!video.isOpened()) {
+        throw std::runtime_error("Error: Could not open video.");
+    }
+
+    // Get video properties
+    int frameWidth = static_cast<int>(video.get(cv::CAP_PROP_FRAME_WIDTH));
+    int frameHeight = static_cast<int>(video.get(cv::CAP_PROP_FRAME_HEIGHT));
+    double originalFps = video.get(cv::CAP_PROP_FPS);
+    int fourcc = static_cast<int>(video.get(cv::CAP_PROP_FOURCC));
+
+    // Calculate new FPS based on speed multiplier
+    double newFps = originalFps * speedMultiplier;
+
+    // Create the output video writer
+    cv::VideoWriter writer(outputFile, fourcc, newFps, cv::Size(frameWidth, frameHeight), filter != "Grayscale");
+    if (!writer.isOpened()) {
+        throw std::runtime_error("Error: Could not open output video file.");
+    }
+
+    // Set the start position in the video
+    video.set(cv::CAP_PROP_POS_MSEC, startSeconds * 1000);
+
+    cv::Mat frame;
+    while (video.get(cv::CAP_PROP_POS_MSEC) < endSeconds * 1000 && video.read(frame)) {
+        // Apply filters based on the selected option
+        if (filter == "Sepia") {
+            cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+                0.272, 0.534, 0.131,
+                0.349, 0.686, 0.168,
+                0.393, 0.769, 0.189);
+            cv::transform(frame, frame, kernel);
+        }
+        else if (filter == "Grayscale") {
+            cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
+        }
+        else if (filter == "Edge Detection") {
+            cv::Mat edges;
+            cv::Canny(frame, edges, 100, 200);
+            cv::cvtColor(edges, frame, cv::COLOR_GRAY2BGR); // Convert edges back to BGR for saving
+        }
+        else if (filter == "Blur") {
+            cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
+        }
+        // "No filter" is the default case; no changes to the frame
+
+        writer.write(frame);  // Write the frame to the output video
+    }
+
+    // Release resources
+    writer.release();
+    video.release();
+
+    std::cout << "Processed video with filter (" << filter << ") saved as: " << outputFile << std::endl;
+}
+
+
+
+
 
 // Placeholder functions for the other actions
 void mergeVideos() {
@@ -484,6 +672,12 @@ void insertAdUI() {
             insertAfterSeconds = 0;  // Ensure the value is non-negative
         }
 
+        // Input field for duration of the ad field
+        ImGui::InputInt("Duration of the ad (seconds)", &durationOfAd);
+        if (durationOfAd < 0) {
+            durationOfAd = 0;  // Ensure the value is non-negative
+        }
+
         // Error message for invalid configurations
         if (insertAdError) {
             ImGui::TextColored(ImVec4(1, 0, 0, 1), "Error: Please select two videos and set 'Insert after' to a value greater than 0.");
@@ -517,6 +711,7 @@ void insertAdUI() {
         isMainVideoSet = false;
         isAdVideoSet = false;
         insertAfterSeconds = 0;
+        durationOfAd = 0;
         insertAdError = false;
     }
 
@@ -545,7 +740,7 @@ void addMainVideo(bool isMainVideo) {
 // Function to validate that two videos are selected and insertion time is valid
 bool validateInsertAd() {
     // Check if both videos are selected and if insertion time is greater than zero
-    return isMainVideoSet && isAdVideoSet && insertAfterSeconds > 0;
+    return isMainVideoSet && isAdVideoSet && insertAfterSeconds > 0 && durationOfAd > 0;
 }
 
 // Function to handle preview of merged ad (stub function)

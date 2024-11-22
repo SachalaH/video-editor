@@ -110,6 +110,7 @@
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>C:\Users\admin\Desktop\videoeditingtool\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -145,6 +146,13 @@
     <ClInclude Include="..\..\..\Desktop\imgui\imstb_textedit.h" />
     <ClInclude Include="..\..\..\Desktop\imgui\imstb_truetype.h" />
     <ClInclude Include="..\..\..\Desktop\tinyfiledialogs\tinyfiledialogs.h" />
+    <ClInclude Include="..\..\..\Desktop\videoeditingtool\include\audio.h" />
+    <ClInclude Include="..\..\..\Desktop\videoeditingtool\include\editing.h" />
+    <ClInclude Include="..\..\..\Desktop\videoeditingtool\include\filter.h" />
+    <ClInclude Include="..\..\..\Desktop\videoeditingtool\include\merge_videos.h" />
+    <ClInclude Include="..\..\..\Desktop\videoeditingtool\include\PauseController.h" />
+    <ClInclude Include="..\..\..\Desktop\videoeditingtool\include\playback.h" />
+    <ClInclude Include="..\..\..\Desktop\videoeditingtool\include\sync.h" />
     <ClInclude Include="FinalSemProject.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="Resource.h" />
@@ -160,6 +168,12 @@
     <ClCompile Include="..\..\..\Desktop\imgui\imgui_tables.cpp" />
     <ClCompile Include="..\..\..\Desktop\imgui\imgui_widgets.cpp" />
     <ClCompile Include="..\..\..\Desktop\tinyfiledialogs\tinyfiledialogs.c" />
+    <ClCompile Include="..\..\..\Desktop\videoeditingtool\src\audio.cpp" />
+    <ClCompile Include="..\..\..\Desktop\videoeditingtool\src\editing.cpp" />
+    <ClCompile Include="..\..\..\Desktop\videoeditingtool\src\filter.cpp" />
+    <ClCompile Include="..\..\..\Desktop\videoeditingtool\src\merge_videos.cpp" />
+    <ClCompile Include="..\..\..\Desktop\videoeditingtool\src\PauseController.cpp" />
+    <ClCompile Include="..\..\..\Desktop\videoeditingtool\src\playback.cpp" />
     <ClCompile Include="FinalSemProject.cpp" />
     <ClCompile Include="Ui.cpp" />
   </ItemGroup>
