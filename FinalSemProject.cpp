@@ -13,7 +13,9 @@
 #include <libavutil/imgutils.h>
 #include <thread>
 #include <atomic>
+#include <fstream>
 #include "playback.h"
+#include "merge_videos.h"
 // Include necessary FFmpeg libraries
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -22,6 +24,8 @@ extern "C" {
 }
 
 namespace fs = std::filesystem;
+
+
 
 // State management for UI
 enum class UIState {
@@ -58,6 +62,12 @@ void addMainVideo(bool isMainVideo);
 bool validateInsertAd();
 void previewInsertAd();
 void saveInsertAd();
+void executeCommand(const std::string& command);
+void mergeMainAdVideos(const std::string& mainVideoPath,
+    const std::string& supportingVideoPath,
+    int insertAfterSeconds,
+    int supportingVideoEndSeconds,
+    const std::string& outputFilePath);
 
 void AttachConsoleOutput() {
     AllocConsole();
@@ -96,7 +106,6 @@ const char* filterLabels[] = { "No filter","Sepia", "Grayscale", "Edge Detection
 
 // Function prototypes for the button actions
 void importVideo();
-void mergeVideos();
 void insertAd();
 bool getVideoDuration(const std::string& path, char* endTimeStr, size_t endTimeSize);
 
@@ -106,9 +115,10 @@ std::atomic<bool> is_playing(true);
 // function prototype for opening a video object using opencv
 cv::VideoCapture openVideo(const std::string& filePath);
 void processVideo(cv::VideoCapture& video, int startSeconds, int endSeconds, float speedMultiplier, const std::string& filter, const std::string& outputFile);
-
-
-
+void extractAudio(const std::string& videoPath, const std::string& outputAudioPath);
+void modifyAudio(const std::string& inputAudioPath, const std::string& outputAudioPath, int startSeconds, int endSeconds, float speedMultiplier);
+void combineVideoAndAudio(const std::string& videoPath, const std::string& audioPath, const std::string& outputPath);
+bool deleteFile(const std::string& filePath);
 int getSecondsFromTimeString(const char* timeStr);
 
 
@@ -159,6 +169,10 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    // Preview state
+    std::atomic<bool> isPreviewRunning(false);
+
+
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         // Poll for and process events
@@ -174,6 +188,14 @@ int main() {
             ImGui::Begin("Video Editor - Main Menu");
 
             if (ImGui::Button("Import a video")) {
+                // reset the variables before calling the functions 
+                videoPath = "";
+                videoSize = 0;
+                static char startTime[16] = "00:00";
+                static char endTime[16] = "00:00";  // Updated dynamically after getting duration
+                muteAudio = false;
+                selectedSpeedIndex = 2;  // Default to normal speed (1x)
+                selectedFilterIndex = 0;  // Default to no filter
                 importVideo();
             }
 
@@ -259,58 +281,145 @@ int main() {
 
             // Preview and Save buttons
             if (ImGui::Button("Preview")) {
-                std::cout << "Previewing video: " << videoPath << "\n";
-                
-                // Add logic to preview the video here
-                //startPreview(videoPath
+                // Ensure the temp directory exists
+                fs::create_directories("temp");
 
-                std::cout << "Previewing video with the following settings:\n";
-                std::cout << "Start Time: " << startTime << " (" << startSeconds << " seconds)\n";
-                std::cout << "End Time: " << endTime << " (" << endSeconds << " seconds)\n";
-
-                // Print mute audio state
-                std::cout << "Mute Audio: " << (muteAudio ? "Yes" : "No") << "\n";
-
-                // Print selected speed
-                std::cout << "Playback Speed: " << speedLabels[selectedSpeedIndex] << "\n";
-
-                // Print selected filter
-                std::cout << "Filter: " << filterLabels[selectedFilterIndex] << "\n";
+                // separate the audio stream
+                std::string tempAudioPath = "temp\\audio.aac"; // Save extracted audio 
+                // Extract audio
+                extractAudio(videoPath, tempAudioPath);
 
                 // open the video object 
                 cv::VideoCapture video = openVideo(videoPath);
-                // trim and apply the speed
-                std::string outputFile = "output_processed.mp4";
-                processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], outputFile);
-                // apply the relevant filters
-                // check if audio is to be muted or no
 
-                //Playback playback(videoPath);
-                //playback.play();
-                //break;
+                // trim and apply the speed
+                // apply the relevant filters
+                std::string outputFile = "temp\\output_processed.mp4";
+                processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], outputFile);
+                
+                // modify the audio as per the start and the end time and the speed 
+                // also check for the mute audio in the function 
+                std::string outputAudioPath = "temp\\processed_audio.aac";
+                if (!muteAudio) {
+                    
+                    // end time of the audio is the edited video's end time speed up to the multiplier
+                    static char audioEndTime[16] = "00:00";  // Updated dynamically after getting duration
+                    getVideoDuration(outputFile, audioEndTime, sizeof(audioEndTime));
+                    int audioEndSeconds = getSecondsFromTimeString(audioEndTime);
+                    if (startSeconds > 0) {
+                        audioEndSeconds += startSeconds;
+                    }
+                    modifyAudio(tempAudioPath, outputAudioPath, startSeconds, audioEndSeconds, speedOptions[selectedSpeedIndex]);
+                    
+                    // Output file path
+                    std::string outputPath = "temp\\output_combined.mp4";
+
+                    // merge the audio and the video
+                    combineVideoAndAudio(outputFile, outputAudioPath, outputPath);
+                    Playback playback(outputPath);
+                    playback.play();
+
+                    
+                    
+                    //break;
+                    deleteFile(outputPath);
+                    deleteFile(tempAudioPath);
+                    deleteFile(outputAudioPath);
+                    deleteFile(outputFile);
+
+                    // reset the variables
+                }
+                else {
+                    Playback playback(outputFile);
+                    playback.play();
+                    deleteFile(tempAudioPath);
+                    deleteFile(outputFile);
+                    // reset the variables
+
+                }
+                
+                // cleanup i.e. remove the temp files
+                
+                
+                
             }
             ImGui::SameLine();
             if (ImGui::Button("Save")) {
-                std::cout << "Saving video with options:\n";
-                std::cout << "Start Time: " << startTime << "\n";
-                std::cout << "End Time: " << endTime << "\n";
-                std::cout << "Mute Audio: " << (muteAudio ? "Yes" : "No") << "\n";
-                std::cout << "Speed: " << speedOptions[selectedSpeedIndex] << "x\n";
-                std::cout << "Filter: " << filterLabels[selectedFilterIndex] << "\n";
                 // Add logic to save the video here
                 // Open a Save File dialog for the user to specify the output file path
                 const char* filters[] = { "*.mp4", "*.avi", "*.mov" }; // Supported formats
-                const char* outputPath = tinyfd_saveFileDialog("Save Processed Video", "output_video.mp4", 3, filters, "Video Files");
+                const char* savePath = tinyfd_saveFileDialog("Save Processed Video", "output_video.mp4", 3, filters, "Video Files");
 
-                if (outputPath) {
-                    std::cout << "Saving video to: " << outputPath << "\n";
+                if (savePath) {
+                    std::cout << "Saving video to: " << savePath << "\n";
 
                     // Reprocess the video with the user's selected file path
                     try {
+                        // Ensure the temp directory exists
+                        fs::create_directories("temp");
+
+                        
+                        if (!muteAudio) {
+                            // separate the audio stream
+                            std::string tempAudioPath = "temp\\audio.aac"; // Save extracted audio 
+                            // Extract audio
+                            extractAudio(videoPath, tempAudioPath);
+
+                            // open the video object 
+                            cv::VideoCapture video = openVideo(videoPath);
+
+                            // trim and apply the speed
+                            // apply the relevant filters
+                            std::string outputFile = "temp\\output_processed.mp4";
+                            processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], outputFile);
+
+                            // modify the audio as per the start and the end time and the speed 
+                            // also check for the mute audio in the function 
+                            std::string outputAudioPath = "temp\\processed_audio.aac";
+
+                            // end time of the audio is the edited video's end time speed up to the multiplier
+                            static char audioEndTime[16] = "00:00";  // Updated dynamically after getting duration
+                            getVideoDuration(outputFile, audioEndTime, sizeof(audioEndTime));
+                            int audioEndSeconds = getSecondsFromTimeString(audioEndTime);
+                            if (startSeconds > 0) {
+                                audioEndSeconds += startSeconds;
+                            }
+                            modifyAudio(tempAudioPath, outputAudioPath, startSeconds, audioEndSeconds, speedOptions[selectedSpeedIndex]);
+
+                            // Output file path
+                            //std::string outputPath = "temp\\output_combined.mp4";
+
+                            // merge the audio and the video
+                            combineVideoAndAudio(outputFile, outputAudioPath, savePath);
+                            //break;
+                            //deleteFile(outputPath);
+                            deleteFile(tempAudioPath);
+                            deleteFile(outputAudioPath);
+                            deleteFile(outputFile);
+                            // redirect back to the main menu 
+                            uiState = UIState::MainMenu;
+
+                        }
+                        else {
+                            // open the video object 
+                            cv::VideoCapture video = openVideo(videoPath);
+
+                            // trim and apply the speed
+                            // apply the relevant filters
+                            
+                            processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], savePath);
+
+                            //deleteFile(tempAudioPath);
+                            //deleteFile(outputFile);
+                            // redirect back to main menu
+                            uiState = UIState::MainMenu;
+
+                        }
+
                         // open the video object 
-                        cv::VideoCapture video = openVideo(videoPath);
-                        processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], outputPath);
-                        std::cout << "Video successfully saved to: " << outputPath << "\n";
+                        //cv::VideoCapture video = openVideo(videoPath);
+                        //processVideo(video, startSeconds, endSeconds, speedOptions[selectedSpeedIndex], filterLabels[selectedFilterIndex], outputPath);
+                        std::cout << "Video successfully saved to: " << savePath << "\n";
                     }
                     catch (const std::exception& ex) {
                         std::cerr << "Error: Failed to save video. Exception: " << ex.what() << "\n";
@@ -493,15 +602,19 @@ void processVideo(cv::VideoCapture& video, int startSeconds, int endSeconds, flo
 
 
 
-// Placeholder functions for the other actions
-void mergeVideos() {
-    std::cout << "Merge Videos button clicked.\n";
-    // Add logic to select and merge up to 6 videos
-}
+
 
 void insertAd() {
     std::cout << "Insert Ad button clicked.\n";
     // Add logic for inserting an ad video into the main video
+}
+
+bool deleteFile(const std::string& filePath) {
+    if (std::remove(filePath.c_str()) != 0) {
+        std::perror("Error deleting file");
+        return false;
+    }
+    return true;
 }
 
 
@@ -586,6 +699,84 @@ bool checkUniqueOrders() {
     return true;
 }
 
+// Ensure FFmpeg is installed and available in PATH
+std::string ffmpegPath = "C:\\Users\\admin\\Desktop\\ffmpeg-2024-11-03-git-df00705e00-full_build\\bin\\ffmpeg.exe"; // Update this to the path to ffmpeg.exe if needed
+
+
+//Function to separate the audio stream of a video 
+void extractAudio(const std::string& videoPath, const std::string& outputAudioPath) {
+    // Ensure the FFmpeg command is available
+    std::cout << "Extract audio called" << videoPath + " " << outputAudioPath << std::endl;
+    
+    if (!fs::exists(ffmpegPath)) {
+        throw std::runtime_error("Error: FFmpeg executable not found. Ensure it is installed and available in PATH.");
+    }
+
+    // Create the command string
+    std::string command = ffmpegPath + " -i \"" + videoPath + "\" -vn -acodec copy \"" + outputAudioPath + "\"";
+    std::cout << command;
+    // Execute the command
+    int retCode = system(command.c_str());
+    if (retCode != 0) {
+        throw std::runtime_error("Error: Failed to extract audio using FFmpeg.");
+    }
+
+    std::cout << "Audio extracted and saved to: " << outputAudioPath << std::endl;
+}
+
+//function to modify the audio
+void modifyAudio(const std::string& inputAudioPath, const std::string& outputAudioPath,
+    int startSeconds, int endSeconds, float speedMultiplier) {
+    
+
+    if (!fs::exists(ffmpegPath)) {
+        throw std::runtime_error("Error: FFmpeg executable not found. Ensure it is installed and available in PATH.");
+    }
+
+    // FFmpeg command components
+    std::string trimFilter = " -ss " + std::to_string(startSeconds) +
+        " -to " + std::to_string(endSeconds);
+
+    std::string speedFilter = (speedMultiplier != 1.0f) ?
+        " -filter:a \"atempo=" + std::to_string(speedMultiplier) + "\"" :
+        "";
+
+    // Construct the FFmpeg command
+    std::string command = ffmpegPath + " -i \"" + inputAudioPath + "\"" +
+        trimFilter +
+        speedFilter +
+        " -y \"" + outputAudioPath + "\"";
+
+    // Execute the command
+    int retCode = system(command.c_str());
+    if (retCode != 0) {
+        throw std::runtime_error("Error: Failed to process audio using FFmpeg.");
+    }
+
+    std::cout << "Processed audio saved to: " << outputAudioPath << std::endl;
+}
+
+
+// function to combine the audio and the video
+void combineVideoAndAudio(const std::string& videoPath, const std::string& audioPath, const std::string& outputPath) {
+    
+    if (!std::filesystem::exists(ffmpegPath)) {
+        throw std::runtime_error("Error: FFmpeg executable not found. Ensure it is installed and available in PATH.");
+    }
+
+    // Construct the FFmpeg command
+    std::string command = ffmpegPath + " -i \"" + videoPath + "\" -i \"" + audioPath +
+        "\" -c:v copy -c:a aac -strict experimental -y \"" + outputPath + "\"";
+
+    // Execute the command
+    int retCode = system(command.c_str());
+    if (retCode != 0) {
+        throw std::runtime_error("Error: Failed to combine video and audio using FFmpeg.");
+    }
+
+    std::cout << "Combined video and audio saved to: " << outputPath << std::endl;
+}
+
 
 // Function to handle preview of merged video (stub function)
 void previewMergedVideo() {
@@ -594,10 +785,30 @@ void previewMergedVideo() {
         return a.order < b.order;
         });
 
-    for (const auto& video : videos) {
-        std::cout << "Order " << video.order << ": " << video.path << "\n";
-    }
+    
     // Add actual preview functionality here
+    // Extract paths from the sorted videos
+    std::vector<std::string> videoPaths;
+    for (const auto& video : videos) {
+        videoPaths.push_back(video.path);
+    }
+
+
+    // Output file for merged video
+    std::string outputFile = "temp\\merged_video.mp4";
+
+    if (!mergeVideos(videoPaths, outputFile)) {
+        std::cerr << "Failed to merge videos." << std::endl;
+    }
+
+    // play the video 
+    Playback playback(outputFile);
+    playback.play();
+
+    // delete the video
+    deleteFile(outputFile);
+
+
 }
 
 // Function to handle saving of merged video (stub function)
@@ -607,10 +818,35 @@ void saveMergedVideo() {
         return a.order < b.order;
         });
 
+    // Extract paths from the sorted videos
+    std::vector<std::string> videoPaths;
     for (const auto& video : videos) {
-        std::cout << "Order " << video.order << ": " << video.path << "\n";
+        videoPaths.push_back(video.path);
     }
+
     // Add actual save functionality here
+    // Open a Save File dialog for the user to specify the output file path
+    const char* filters[] = { "*.mp4", "*.avi", "*.mov" }; // Supported formats
+    const char* savePath = tinyfd_saveFileDialog("Save Processed Video", "merged_video.mp4", 3, filters, "Video Files");
+
+    if (savePath) {
+        std::cout << "Saving video to: " << savePath << "\n";
+
+        // Reprocess the video with the user's selected file path
+        try {
+            if (!mergeVideos(videoPaths, savePath)) {
+                std::cerr << "Failed to merge videos." << std::endl;
+            }
+            std::cout << "Video successfully saved to: " << savePath << "\n";
+            
+            videos.clear();
+            videoPaths.clear();
+            uiState = UIState::MainMenu;
+        }
+        catch (const std::exception& ex) {
+            std::cerr << "Error: Failed to save video. Exception: " << ex.what() << "\n";
+        }
+    }
 }
 
 
@@ -668,13 +904,22 @@ void insertAdUI() {
 
         // Input field for insertion time in seconds
         ImGui::InputInt("Insert ad after (seconds)", &insertAfterSeconds);
-        if (insertAfterSeconds < 0) {
+        static char endTimeOfMainVideo[16] = "00:00";
+        static char endTimeOfAdVideo[16] = "00:00";
+        
+        getVideoDuration(mainVideo.path, endTimeOfMainVideo, sizeof(endTimeOfMainVideo));
+        int endTimeOfMainVideoSeconds = getSecondsFromTimeString(endTimeOfMainVideo);
+
+        getVideoDuration(adVideo.path, endTimeOfAdVideo, sizeof(endTimeOfAdVideo));
+        int endTimeOfAdVideoSeconds = getSecondsFromTimeString(endTimeOfAdVideo);
+
+        if (insertAfterSeconds < 0 || insertAfterSeconds > endTimeOfMainVideoSeconds) {
             insertAfterSeconds = 0;  // Ensure the value is non-negative
         }
 
         // Input field for duration of the ad field
         ImGui::InputInt("Duration of the ad (seconds)", &durationOfAd);
-        if (durationOfAd < 0) {
+        if (durationOfAd < 0 || durationOfAd > endTimeOfAdVideoSeconds) {
             durationOfAd = 0;  // Ensure the value is non-negative
         }
 
@@ -686,8 +931,20 @@ void insertAdUI() {
         // Preview and Save Buttons
         if (ImGui::Button("Preview")) {
             if (validateInsertAd()) {
-                previewInsertAd();
-                insertAdError = false;
+                std::string outputVideo = "temp\\merged_ad_video.mp4";
+                // play
+                if (mainVideo.isMainVideo) {
+                    mergeMainAdVideos(mainVideo.path, adVideo.path, insertAfterSeconds, durationOfAd, outputVideo);
+                }
+                else {
+                    mergeMainAdVideos(adVideo.path, mainVideo.path, insertAfterSeconds, durationOfAd, outputVideo);
+                }
+                
+                Playback playback(outputVideo);
+                playback.play();
+                
+                // delete the files
+                deleteFile(outputVideo);
             }
             else {
                 insertAdError = true;
@@ -696,7 +953,38 @@ void insertAdUI() {
         ImGui::SameLine();
         if (ImGui::Button("Save")) {
             if (validateInsertAd()) {
-                saveInsertAd();
+                // save the video
+
+                // Open a Save File dialog for the user to specify the output file path
+                const char* filters[] = { "*.mp4", "*.avi", "*.mov" }; // Supported formats
+                const char* savePath = tinyfd_saveFileDialog("Save Processed Video", "merged_video.mp4", 3, filters, "Video Files");
+
+                if (savePath) {
+                    std::cout << "Saving video to: " << savePath << "\n";
+
+                    // Reprocess the video with the user's selected file path
+                    try {
+                        if (mainVideo.isMainVideo) {
+                            mergeMainAdVideos(mainVideo.path, adVideo.path, insertAfterSeconds, durationOfAd, savePath);
+                        }
+                        else {
+                            mergeMainAdVideos(adVideo.path, mainVideo.path, insertAfterSeconds, durationOfAd, savePath);
+                        }
+                       
+                        std::cout << "Video successfully saved to: " << savePath << "\n";
+                        isMainVideoSet = false;
+                        isAdVideoSet = false;
+                        insertAfterSeconds = 0;
+                        durationOfAd = 0;
+                        insertAdError = false;
+                        uiState = UIState::MainMenu;
+                        
+                    }
+                    catch (const std::exception& ex) {
+                        std::cerr << "Error: Failed to save video. Exception: " << ex.what() << "\n";
+                    }
+                }
+
                 insertAdError = false;
             }
             else {
@@ -717,6 +1005,71 @@ void insertAdUI() {
 
     ImGui::End();
 }
+
+
+
+// Utility function to execute shell commands
+void executeCommand(const std::string& command) {
+    int ret = std::system(command.c_str());
+    if (ret != 0) {
+        throw std::runtime_error("Command failed: " + command);
+    }
+}
+
+void mergeMainAdVideos(const std::string& mainVideoPath,
+    const std::string& supportingVideoPath,
+    int insertAfterSeconds,
+    int supportingVideoEndSeconds,
+    const std::string& outputFilePath) {
+    try {
+        // Step 1: Trim the supporting video
+        std::string trimmedSupportingVideo = "temp\\trimmed_supporting_video.mp4";
+        std::string cmdTrim = "ffmpeg -y -i " + supportingVideoPath +
+            " -t " + std::to_string(supportingVideoEndSeconds) +
+            " -c copy " + trimmedSupportingVideo;
+        executeCommand(cmdTrim);
+
+        // Step 2: Split the main video at the insertion point
+        std::string part1 = "temp\\main_part1.mp4";
+        std::string part2 = "temp\\main_part2.mp4";
+        std::string cmdSplit1 = "ffmpeg -y -i " + mainVideoPath +
+            " -t " + std::to_string(insertAfterSeconds) +
+            " -c copy " + part1;
+        std::string cmdSplit2 = "ffmpeg -y -i " + mainVideoPath +
+            " -ss " + std::to_string(insertAfterSeconds) +
+            " -c copy " + part2;
+        executeCommand(cmdSplit1);
+        executeCommand(cmdSplit2);
+
+        // Step 3: Concatenate the parts and the trimmed supporting video
+        std::string concatListFile = "concat_list.txt";
+        std::ofstream file(concatListFile);
+        if (!file.is_open()) {
+            throw std::runtime_error("Failed to open file for concatenation list.");
+        }
+        file << "file '" << part1 << "'\n";
+        file << "file '" << trimmedSupportingVideo << "'\n";
+        file << "file '" << part2 << "'\n";
+        file.close();
+
+        std::string cmdConcat = "ffmpeg -y -f concat -safe 0 -i " + concatListFile +
+            " -c copy " + outputFilePath;
+        executeCommand(cmdConcat);
+
+        // Step 4: Clean up temporary files
+        std::remove(part1.c_str());
+        std::remove(part2.c_str());
+        std::remove(concatListFile.c_str());
+        std::remove(trimmedSupportingVideo.c_str());
+
+        std::cout << "Video merging completed successfully. Output: " << outputFilePath << std::endl;
+
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
+}
+
 
 // Function to add a video (main or ad) using tinyfiledialogs
 void addMainVideo(bool isMainVideo) {
